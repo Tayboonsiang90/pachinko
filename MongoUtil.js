@@ -9,7 +9,7 @@ async function connect(uri, dbname) {
         useNewUrlParser: true,
     });
 
-    _db = client.db(dbname); // select the sample_airbnb database
+    _db = client.db(dbname); 
     console.log("database connected");
 }
 
