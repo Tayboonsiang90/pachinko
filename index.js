@@ -26,8 +26,8 @@ async function checkTraderEmailRepeat(email) {
 }
 //This function takes in validated create account form inputs and inserts a new trader document CHECKED
 //Returns the id_ of the newly created trader
-async function createTrader(name, country, dateOfBirth, email, password, dateCreated) {
-    entry = await getDB().collection("trader").insertOne({ name, country, dateOfBirth, email, password, dateCreated });
+async function createTrader(name, country, dateOfBirth, email, password) {
+    entry = await getDB().collection("trader").insertOne({ name: name, country: country, dateOfBirth: dateOfBirth, email: email, password: password, timestamp: new Date().getTime() });
 
     return entry.insertedId.toString();
 }
@@ -107,14 +107,14 @@ function populateFakeTrader(times) {
     for (let i = 0; i < times; i++) {
         let name = fakeNames[Math.floor(Math.random() * fakeNames.length)] + " " + fakeNames[Math.floor(Math.random() * fakeNames.length)];
         let country = fakeCountries[Math.floor(Math.random() * fakeCountries.length)].trim();
-        let dateOfBirth = new Date(start.getTime() + Math.random() * (end.getTime() - start.getTime()));
+        let dateOfBirth = start.getTime() + Math.random() * (end.getTime() - start.getTime());
         let email = fakeNames[Math.floor(Math.random() * fakeNames.length)].toLowerCase() + Math.floor(Math.random() * 1000) + "@gmail.com";
         let password = "rotiprata" + Math.floor(Math.random() * 1000);
-        let dateCreated = new Date();
 
-        createTrader(name, country, dateOfBirth, email, password, dateCreated);
+        createTrader(name, country, dateOfBirth, email, password);
     }
 }
+//Trader Stack Ends
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
 //Coin Stack Starts
@@ -139,6 +139,7 @@ async function getCoinDetails(coinId_) {
         .findOne({ _id: ObjectId(coinId_) });
 }
 //This function deposits coin, with quantity and trader Id_
+//The requirement is to update both quantity in coin and deposit transaction collection
 async function depositCoin(traderId_, coinId_, quantity) {
     queryCoin = await getDB()
         .collection("coin")
@@ -148,7 +149,7 @@ async function depositCoin(traderId_, coinId_, quantity) {
         });
     if (queryCoin) {
         //If The field can be found
-        newQty = queryCoin.balances[0].availableBalance + quantity;
+        let newQty = queryCoin.balances[0].availableBalance + quantity;
         await getDB()
             .collection("coin")
             .updateOne(
@@ -173,6 +174,12 @@ async function depositCoin(traderId_, coinId_, quantity) {
                 }
             );
     }
+    await getDB().collection("depositTransactions").insertOne({
+        traderId_: traderId_,
+        coinId_: coinId_,
+        quantity: quantity,
+        timestamp: new Date().getTime(),
+    });
 }
 //This function tries to withdraws coin, with quantity and trader Id_
 //This function will return true once withdrawal is completed (case 3)
@@ -204,6 +211,12 @@ async function withdrawCoin(traderId_, coinId_, quantity) {
                         $set: { "balances.$.availableBalance": newQty },
                     }
                 );
+            await getDB().collection("withdrawalTransactions").insertOne({
+                traderId_: traderId_,
+                coinId_: coinId_,
+                quantity: quantity,
+                timestamp: new Date().getTime(),
+            });
             return true;
         }
     } else {
@@ -229,8 +242,81 @@ async function checkCoinBalances(traderId_) {
         })
         .toArray();
 }
+//Coin Stack Ends
 
-//Create Account Stack Ends
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+//Deposit Transactions Stack Starts
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+//This function returns a list of deposit transactions based on time start to time end (unix timestamps)
+//If timeend isn't specified, then it is assumed to be today
+//If timestart isn't specified, then its assumed to be 1 month
+//coinId_ is a optional parameter
+async function checkDepositTransactions(traderId_, timeStart = new Date().getTime() - 2629743000, timeEnd = new Date().getTime(), coinId_ = null) {
+    if (coinId_) {
+        queryObject = {
+            traderId_: traderId_,
+            coinId_: coinId_,
+            timestamp: { $gte: timeStart, $lt: timeEnd },
+        };
+    } else {
+        queryObject = {
+            traderId_: traderId_,
+            timestamp: { $gte: timeStart, $lt: timeEnd },
+        };
+    }
+    queryCoin = await getDB().collection("depositTransactions").find(queryObject).toArray();
+    return queryCoin;
+}
+//Deposit Transactions Stack Ends
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+//Withdrawal Transactions Stack Starts
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+//This function returns a list of withdrawal transactions based on time start to time end (unix timestamps)
+//If timeend isn't specified, then it is assumed to be today
+//If timestart isn't specified, then its assumed to be 1 month
+//coinId_ is a optional parameter
+async function checkWithdrawalTransactions(traderId_, timeStart = new Date().getTime() - 2629743000, timeEnd = new Date().getTime(), coinId_ = null) {
+    if (coinId_) {
+        queryObject = {
+            traderId_: traderId_,
+            coinId_: coinId_,
+            timestamp: { $gte: timeStart, $lt: timeEnd },
+        };
+    } else {
+        queryObject = {
+            traderId_: traderId_,
+            timestamp: { $gte: timeStart, $lt: timeEnd },
+        };
+    }
+    queryCoin = await getDB().collection("withdrawalTransactions").find(queryObject).toArray();
+    return queryCoin;
+}
+//Withdrawal Transactions Stack Ends
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+//Open Order Stack Starts
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+//This function
+async function createOpenOrder(coinId_, traderId_, price, quantity, type) {
+    //check if buy or sell
+    if (type == "BUY") {
+        //Retrieve the sell side orderbook for that coin
+        queryOrders = await getDB()
+            .collection("openOrders")
+            .find({
+                coinId_: coinId_,
+                type: "SELL",
+            })
+            .toArray();
+        //Need to lock all read/writes to database while orderbook matching is done
+        //From the queries orders, burn down the quantity
+        for (let i in queryOrders) {
+            
+        }
+        
+    }
+}
 
 async function main() {
     const MONGO_URI = process.env.MONGO_URI;
@@ -241,7 +327,7 @@ async function main() {
     //let coinId_ = await createCoin("CAT", "catcoin", "www.kek.com", "catcoin");
     //await depositCoin(traderId_, coinId_, 8000);
     //await withdrawCoin(traderId_, coinId_, 2000);
-    checkCoinBalances(traderId_);
+    //checkCoinBalances(traderId_);
 }
 
 main();
