@@ -27,7 +27,16 @@ async function checkTraderEmailRepeat(email) {
 //This function takes in validated create account form inputs and inserts a new trader document CHECKED
 //Returns the id_ of the newly created trader
 async function createTrader(name, country, dateOfBirth, email, password) {
-    entry = await getDB().collection("trader").insertOne({ name: name, country: country, dateOfBirth: dateOfBirth, email: email, password: password, timestamp: new Date().getTime() });
+    entry = await getDB().collection("trader").insertOne({
+        name: name,
+        country: country,
+        dateOfBirth: dateOfBirth,
+        email: email,
+        password: password,
+        timestamp: new Date().getTime(),
+        availableUSD: 0,
+        inOrderUSD: 0,
+    });
 
     return entry.insertedId.toString();
 }
@@ -94,6 +103,68 @@ async function deleteTrader(traderId_) {
         });
 }
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
+//Account USD Balances
+//This function deposits USD, with quantity and trader Id_
+async function depositTraderUSD(traderId_, quantity) {
+    await getDB()
+        .collection("trader")
+        .updateOne(
+            {
+                _id: ObjectId(traderId_),
+            },
+            {
+                $inc: { availableUSD: quantity },
+            }
+        );
+}
+//This function withdraws USD, with quantity and trader Id_
+//this function will return false if the person don't have this amount of usd
+async function withdrawTraderUSD(traderId_, quantity) {
+    if (checkTraderUSD(traderId_).availableUSD >= quantity) {
+        await getDB()
+            .collection("trader")
+            .updateOne(
+                {
+                    _id: ObjectId(traderId_),
+                },
+                {
+                    $inc: { availableUSD: -quantity },
+                }
+            );
+        return true;
+    } else {
+        return false;
+    }
+}
+//This function adjust USD, with quantity and trader Id_
+async function adjustTraderUSD(traderId_, availableUSDQuantity, inOrderUSDQuantity) {
+    await getDB()
+        .collection("trader")
+        .updateOne(
+            {
+                _id: ObjectId(traderId_),
+            },
+            {
+                $inc: {
+                    availableUSD: availableUSDQuantity,
+                    inOrderUSD: inOrderUSDQuantity,
+                },
+            }
+        );
+}
+//This function returns usd amount, given trader Id_
+//returns an object with keys availableUSD and inOrderUSD
+async function checkTraderUSD(traderId_) {
+    let trader = await getDB()
+        .collection("trader")
+        .findOne({
+            _id: ObjectId(traderId_),
+        });
+    return {
+        availableUSD: trader.availableUSD,
+        inOrderUSD: trader.inOrderUSD,
+    };
+}
 //Populate database with fake names
 let fakeNames = "Kolt Devyn Marin Axl Ricky Alijah Austin Gerard Eddie Felix Kale Tala Jayda Saphira Kendal Zamir Kelis Destiny Dominic Sunny Jessica Blanca Makiyah Madelynn Chaz Skyla Kaeden Raya Ashtyn Korbin Taha Easton Slade Audrina Dash Graciela Rosemarie Tobin Robin Onyx".split(" ");
 let fakeCountries =
@@ -224,6 +295,23 @@ async function withdrawCoin(traderId_, coinId_, quantity) {
         return false;
     }
 }
+//This function adjusts coin balances for that trader id_ and that coinId_
+async function adjustCoin(traderId_, coinId_, availableBalanceQuantity, inOrderBalanceQuantity) {
+    await getDB()
+        .collection("coin")
+        .updateOne(
+            {
+                _id: ObjectId(coinId_),
+                "balances.traderId_": traderId_,
+            },
+            {
+                $inc: {
+                    "balances.$.availableBalance": availableBalanceQuantity,
+                    "balances.$.inOrderBalance": inOrderBalanceQuantity,
+                },
+            }
+        );
+}
 //This function checks all the coin balances for a trader given the trader Id_
 //returns an array of the coins with the balances embedded inside
 async function checkCoinBalances(traderId_) {
@@ -242,6 +330,7 @@ async function checkCoinBalances(traderId_) {
         })
         .toArray();
 }
+//This function changes
 //Coin Stack Ends
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -296,15 +385,17 @@ async function checkWithdrawalTransactions(traderId_, timeStart = new Date().get
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
 //Open Order Stack Starts
+//Will add to Filled Order Stack
+//Will add to Cancelled Order Stack
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
-//This function
+//This function matches orders (assuming the trader has enough usd to place the trade)
 async function createOpenOrder(coinId_, traderId_, price, quantity, type) {
     //check if buy or sell
     if (type == "BUY") {
-        //Check if the person have enough USD balance to create the order...
-
+        //Initialize the buyers balances in coin, there is a chance that he doesn't have any balances
+        depositCoin(traderId_, coinId_, 0);
         //Retrieve the sell side orderbook for that coin
-        queryOrders = await getDB()
+        let queryOrders = await getDB()
             .collection("openOrders")
             .find({
                 //Only retrieve sell side orderbook to match
@@ -317,39 +408,52 @@ async function createOpenOrder(coinId_, traderId_, price, quantity, type) {
                 timestamp: 1,
             })
             .toArray();
-        console.log(queryOrders);
+
         //Need to lock all read/writes to database while orderbook matching is done
         //Loop through the orderbook from smallest to largest
-        let amountToPay = 0;
+        let amountUSDPaid = 0; //keep track of usd paid for final price calculations
+        let initialQuantity = quantity; //keep track of initial quantity buy ordered
         for (let order of queryOrders) {
             //Check if the buy order price is more/equals to sell order price
             if (price >= order.price) {
-                if (quantity >= order.quantity) {
-                    //amount to buy is more than what order can fill at that price
-                    //remove the document from the open orders collection since the order has been filled
+                if (quantity >= order.orderQuantity - order.filledQuantity) {
+                    //amount to buy is more than what order can fill at that price, hence we fill the sell order
+                    //Remove the document from the open orders collection since the order has been filled
                     await getDB()
                         .collection("openOrders")
                         .deleteOne({
                             _id: ObjectId(order._id),
                         });
-                    
                     //Copy the order to filled orders collection
-                    await getDB().collection("filledOrders").insertOne({
-                        coinId_: order.coinId_,
-                        traderId_: order.traderId_,
-                        orderId_: order._id, //The original order id
-                        orderPrice: order.price, //The price the order was set at
-                        filledPrice: order.amountCredited, //The price the order was filled at
-                        quantity: order.quantity, //Amount
-                        type: order.type, //BUY/SELL
-                        orderTimestamp: order.timestamp, //Timestamp when order was placed
-                        filledTimestamp: new Date().getTime(), //Timestamp when order was filled
-                    });
-                    quantity = quantity - order.quantity;
-                    amountToPay += order.price * order.quantity;
+                    await getDB()
+                        .collection("filledOrders")
+                        .insertOne({
+                            coinId_: order.coinId_,
+                            traderId_: order.traderId_,
+                            orderId_: order._id, //The original order id
+                            orderPrice: order.price, //The price the order was set at
+                            filledPrice: (order.usdTransacted + order.price * (order.orderQuantity - order.filledQuantity)) / order.orderQuantity, //The price the order was filled at
+                            quantity: order.orderQuantity, //Amount
+                            type: order.type, //BUY/SELL
+                            orderTimestamp: order.timestamp, //Timestamp when order was placed
+                            filledTimestamp: new Date().getTime(), //Timestamp when order was filled
+                        });
+                    //Update Sellers USD (increase)
+                    adjustTraderUSD(order.traderId_, order.price * (order.orderQuantity - order.filledQuantity), 0);
+                    //Update Sellers Coin Balance (decrease)
+                    adjustCoin(order.traderId_, 0, -(order.orderQuantity - order.filledQuantity));
+                    //Update Buyers USD (decrease)
+                    adjustTraderUSD(traderId_, -order.price * (order.orderQuantity - order.filledQuantity), 0);
+                    //Update Buyers Coin Balance
+                    adjustCoin(traderId_, order.orderQuantity - order.filledQuantity, 0);
+
+                    amountUSDPaid += order.price * (order.orderQuantity - order.filledQuantity); //Update amount of usd paid
+                    quantity -= order.quantity; //deduct off current quantity
+
                     //move on to the next item
                 } else {
-                    //update that particular order
+                    //buy quantity is less than the current SELL order size
+                    //then we need to finish the buy order and adjust the current SELL order
                     await getDB()
                         .collection("openOrders")
                         .updateOne(
@@ -357,49 +461,191 @@ async function createOpenOrder(coinId_, traderId_, price, quantity, type) {
                                 _id: ObjectId(order._id),
                             },
                             {
-                                quantity: order.quantity - quantity,
+                                filledQuantity: order.filledQuantity + quantity, //increment the filled quantity by the amount sold
                             }
                         );
-                    amountToPay += order.price * order.quantity;
-                    //Copy the order to filled orders collection
-                    await getDB().collection("filledOrders").insertOne({
-                        coinId_: order.coinId_,
-                        traderId_: order.traderId_,
-                        orderId_: order._id,
-                        orderPrice: order.price,
-                        filledPrice: order.price,
-                        quantity: quantity, //since its a half filled order
-                        type: order.type,
-                        orderTimestamp: order.timestamp,
-                        filledTimestamp: new Date().getTime(),
-                    });
+                    //Update Sellers USD (increase)
+                    adjustTraderUSD(order.traderId_, order.price * quantity, 0);
+                    //Update Sellers Coin Balance (decrease)
+                    adjustCoin(order.traderId_, 0, -quantity);
+                    //Update Buyers USD (decrease)
+                    adjustTraderUSD(traderId_, -order.price * quantity, 0);
+                    //Update Buyers Coin Balance
+                    adjustCoin(traderId_, quantity, 0);
+
+                    amountUSDPaid += order.price * quantity; //Update amount of usd paid
+
+                    //send BUY order to filled order collection
+                    await getDB()
+                        .collection("filledOrders")
+                        .insertOne({
+                            coinId_: coinId_,
+                            traderId_: traderId_,
+                            orderId_: new ObjectId(), //The original order id
+                            orderPrice: price, //The price the order was set at
+                            filledPrice: amountUSDPaid / initialQuantity, //The price the order was filled at
+                            quantity: initialQuantity, //Amount
+                            type: "BUY", //BUY/SELL
+                            orderTimestamp: new Date().getTime(), //Timestamp when order was placed
+                            filledTimestamp: new Date().getTime(), //Timestamp when order was filled
+                        });
+
+                    //completion of the MARKET ORDER. THIS HAS BEEN A MARKET ORDER
                 }
+            } else {
+                //since the BID price is less than the LOWEST SELL order price, we make a new BUY limit order as an open order
+                await getDB()
+                    .collection("openOrders")
+                    .insertOne({
+                        coinId_: coinId_,
+                        traderId_: traderId_,
+                        orderPrice: price, //The price the order was set at
+                        orderQuantity: initialQuantity,
+                        filledQuantity: initialQuantity - quantity,
+                        usdTransacted: amountUSDPaid,
+                        type: "BUY", //BUY/SELL
+                        timestamp: new Date().getTime(), //Timestamp when order was placed
+                    });
+                //Now we need to adjust the available balances
+                //Update Buyers USD (move available to in order)
+                adjustTraderUSD(traderId_, -price * quantity, price * quantity);
             }
         }
     } else {
         //Retrieve the buy side orderbook for that coin
-        queryOrders = await getDB()
+        let queryOrders = await getDB()
             .collection("openOrders")
             .find({
+                //Only retrieve sell side orderbook to match
                 coinId_: coinId_,
                 type: "BUY",
             })
+            .sort({
+                //sort by timestamp first, then sort by price
+                price: -1, //highest price first
+                timestamp: 1,
+            })
             .toArray();
-        console.log(queryOrders);
+        console.log("The sell side for the orderbook is ", queryOrders);
+        //Need to lock all read/writes to database while orderbook matching is done
+        //Loop through the BUY orderbook from largest price to smallest price
+        let amountUSDRecieved = 0; //keep track of usd paid for final price calculations
+        let initialQuantity = quantity; //keep track of initial quantity sell ordered
+        for (let order of queryOrders) {
+            //Check if the SELL order price is less/equals to buy order price
+            if (price <= order.price) {
+                if (quantity >= order.orderQuantity - order.filledQuantity) {
+                    //amount to sell is more than what order can fill at that price, hence we fill the buy order
+                    //Remove the document from the open orders collection since the order has been filled
+                    await getDB()
+                        .collection("openOrders")
+                        .deleteOne({
+                            _id: ObjectId(order._id),
+                        });
+                    //Copy the order to filled orders collection
+                    await getDB()
+                        .collection("filledOrders")
+                        .insertOne({
+                            coinId_: order.coinId_,
+                            traderId_: order.traderId_,
+                            orderId_: order._id, //The original order id
+                            orderPrice: order.price, //The price the order was set at
+                            filledPrice: (order.usdTransacted + order.price * (order.orderQuantity - order.filledQuantity)) / order.orderQuantity, //The price the order was filled at
+                            quantity: order.orderQuantity, //Amount
+                            type: order.type, //BUY/SELL
+                            orderTimestamp: order.timestamp, //Timestamp when order was placed
+                            filledTimestamp: new Date().getTime(), //Timestamp when order was filled
+                        });
+                    //Update Buyers USD (decrease)
+                    adjustTraderUSD(order.traderId_, 0, -order.price * (order.orderQuantity - order.filledQuantity));
+                    //Update Buyers Coin Balance (increase)
+                    adjustCoin(order.traderId_, order.orderQuantity - order.filledQuantity, 0);
+                    //Update Sellers USD (increase)
+                    adjustTraderUSD(traderId_, order.price * (order.orderQuantity - order.filledQuantity), 0);
+                    //Update Sellers Coin Balance (decrease)
+                    adjustCoin(order.traderId_, -(order.orderQuantity - order.filledQuantity), 0);
+
+                    amountUSDRecieved += order.price * (order.orderQuantity - order.filledQuantity); //Update amount of usd recieved
+                    quantity -= order.quantity; //deduct off current quantity
+
+                    //move on to the next item
+                } else {
+                    //buy quantity is less than the current SELL order size
+                    //then we need to finish the buy order and adjust the current SELL order
+                    await getDB()
+                        .collection("openOrders")
+                        .updateOne(
+                            {
+                                _id: ObjectId(order._id),
+                            },
+                            {
+                                filledQuantity: order.filledQuantity + quantity, //increment the filled quantity by the amount sold
+                            }
+                        );
+                    //Update Buyers USD (decrease)
+                    adjustTraderUSD(order.traderId_, 0, -order.price * quantity);
+                    //Update Buyers Coin Balance (increase)
+                    adjustCoin(order.traderId_, quantity, 0);
+                    //Update Sellers USD (increase)
+                    adjustTraderUSD(traderId_, order.price * quantity, 0);
+                    //Update Sellers Coin Balance (decrease)
+                    adjustCoin(traderId_, -quantity, 0);
+
+                    amountUSDRecieved += order.price * quantity; //Update amount of usd paid
+
+                    //send SELL order to filled order collection
+                    await getDB()
+                        .collection("filledOrders")
+                        .insertOne({
+                            coinId_: coinId_,
+                            traderId_: traderId_,
+                            orderId_: new ObjectId(), //The original order id
+                            orderPrice: price, //The price the order was set at
+                            filledPrice: amountUSDRecieved / initialQuantity, //The price the order was filled at
+                            quantity: initialQuantity, //Amount
+                            type: "SELL", //BUY/SELL
+                            orderTimestamp: new Date().getTime(), //Timestamp when order was placed
+                            filledTimestamp: new Date().getTime(), //Timestamp when order was filled
+                        });
+
+                    //completion of the MARKET ORDER. THIS HAS BEEN A MARKET ORDER
+                }
+            } else {
+                //since the SELL price is more than the HIGHEST BUY order price, we make a new SELL limit order as an open order
+                await getDB()
+                    .collection("openOrders")
+                    .insertOne({
+                        coinId_: coinId_,
+                        traderId_: traderId_,
+                        orderPrice: price, //The price the order was set at
+                        orderQuantity: initialQuantity,
+                        filledQuantity: initialQuantity - quantity,
+                        usdTransacted: amountUSDPaid,
+                        type: "SELL", //BUY/SELL
+                        timestamp: new Date().getTime(), //Timestamp when order was placed
+                    });
+                //Now we need to adjust the available balances
+                //Update Buyers USD (move available to in order)
+                adjustCoin(traderId_, -quantity, quantity);
+            }
+        }
     }
 }
 
 async function main() {
     const MONGO_URI = process.env.MONGO_URI;
     await connect(MONGO_URI, "pachinko");
-    traderId_ = "6229ede73fc6b138a1bcd899";
-    coinId_ = "622cde8ecfcf5392d3e96ac5";
+    trader1Id_ = "6230c8501410bbdd9ae408af";
+    trader2Id_ = "6230c8501410bbdd9ae408b0";
+    coinId_ = "6230c8d75548f25eff93b4fe";
 
-    createOpenOrder(coinId_, traderId_, 1.1, 2000, "BUY");
-    //let coinId_ = await createCoin("CAT", "catcoin", "www.kek.com", "catcoin");
-    //await depositCoin(traderId_, coinId_, 8000);
-    //await withdrawCoin(traderId_, coinId_, 2000);
-    //checkCoinBalances(traderId_);
+    //populateFakeTrader(2);
+    //createCoin("DOGE", "Dogecoin", "www.kek.com", "dogecoin");
+    //depositTraderUSD(trader1Id_, 10000);
+    //depositCoin(trader2Id_, coinId_, 10000);
+    createOpenOrder(coinId_, trader2Id_, 1, 1000, "SELL");
+
+    console.log("Tests completed");
 }
 
 main();
