@@ -301,20 +301,91 @@ async function checkWithdrawalTransactions(traderId_, timeStart = new Date().get
 async function createOpenOrder(coinId_, traderId_, price, quantity, type) {
     //check if buy or sell
     if (type == "BUY") {
+        //Check if the person have enough USD balance to create the order...
+
         //Retrieve the sell side orderbook for that coin
         queryOrders = await getDB()
             .collection("openOrders")
             .find({
+                //Only retrieve sell side orderbook to match
                 coinId_: coinId_,
                 type: "SELL",
             })
+            .sort({
+                //sort by timestamp first, then sort by price
+                price: 1,
+                timestamp: 1,
+            })
             .toArray();
+        console.log(queryOrders);
         //Need to lock all read/writes to database while orderbook matching is done
-        //From the queries orders, burn down the quantity
-        for (let i in queryOrders) {
-            
+        //Loop through the orderbook from smallest to largest
+        let amountToPay = 0;
+        for (let order of queryOrders) {
+            //Check if the buy order price is more/equals to sell order price
+            if (price >= order.price) {
+                if (quantity >= order.quantity) {
+                    //amount to buy is more than what order can fill at that price
+                    //remove the document from the open orders collection since the order has been filled
+                    await getDB()
+                        .collection("openOrders")
+                        .deleteOne({
+                            _id: ObjectId(order._id),
+                        });
+                    
+                    //Copy the order to filled orders collection
+                    await getDB().collection("filledOrders").insertOne({
+                        coinId_: order.coinId_,
+                        traderId_: order.traderId_,
+                        orderId_: order._id, //The original order id
+                        orderPrice: order.price, //The price the order was set at
+                        filledPrice: order.amountCredited, //The price the order was filled at
+                        quantity: order.quantity, //Amount
+                        type: order.type, //BUY/SELL
+                        orderTimestamp: order.timestamp, //Timestamp when order was placed
+                        filledTimestamp: new Date().getTime(), //Timestamp when order was filled
+                    });
+                    quantity = quantity - order.quantity;
+                    amountToPay += order.price * order.quantity;
+                    //move on to the next item
+                } else {
+                    //update that particular order
+                    await getDB()
+                        .collection("openOrders")
+                        .updateOne(
+                            {
+                                _id: ObjectId(order._id),
+                            },
+                            {
+                                quantity: order.quantity - quantity,
+                            }
+                        );
+                    amountToPay += order.price * order.quantity;
+                    //Copy the order to filled orders collection
+                    await getDB().collection("filledOrders").insertOne({
+                        coinId_: order.coinId_,
+                        traderId_: order.traderId_,
+                        orderId_: order._id,
+                        orderPrice: order.price,
+                        filledPrice: order.price,
+                        quantity: quantity, //since its a half filled order
+                        type: order.type,
+                        orderTimestamp: order.timestamp,
+                        filledTimestamp: new Date().getTime(),
+                    });
+                }
+            }
         }
-        
+    } else {
+        //Retrieve the buy side orderbook for that coin
+        queryOrders = await getDB()
+            .collection("openOrders")
+            .find({
+                coinId_: coinId_,
+                type: "BUY",
+            })
+            .toArray();
+        console.log(queryOrders);
     }
 }
 
@@ -324,6 +395,7 @@ async function main() {
     traderId_ = "6229ede73fc6b138a1bcd899";
     coinId_ = "622cde8ecfcf5392d3e96ac5";
 
+    createOpenOrder(coinId_, traderId_, 1.1, 2000, "BUY");
     //let coinId_ = await createCoin("CAT", "catcoin", "www.kek.com", "catcoin");
     //await depositCoin(traderId_, coinId_, 8000);
     //await withdrawCoin(traderId_, coinId_, 2000);
