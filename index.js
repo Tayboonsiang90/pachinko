@@ -57,7 +57,7 @@ async function validatePassword(traderId_, password) {
         .collection("trader")
         .findOne(
             {
-                _id: ObjectId(traderId_),
+                _id: traderId_,
             },
             {
                 projection: {
@@ -70,37 +70,31 @@ async function validatePassword(traderId_, password) {
 }
 //This function takes in validated email and changes the email of the trader with Id_ CHECKED
 async function changeTraderEmail(traderId_, email) {
-    await getDB()
-        .collection("trader")
-        .updateOne(
-            {
-                _id: ObjectId(traderId_),
-            },
-            {
-                $set: { email },
-            }
-        );
+    await getDB().collection("trader").updateOne(
+        {
+            _id: traderId_,
+        },
+        {
+            $set: { email },
+        }
+    );
 }
 //This function takes in validated password and changes the password of the trader with Id_ CHECKED
 async function changeTraderPassword(traderId_, password) {
-    await getDB()
-        .collection("trader")
-        .updateOne(
-            {
-                _id: ObjectId(traderId_),
-            },
-            {
-                $set: { password },
-            }
-        );
+    await getDB().collection("trader").updateOne(
+        {
+            _id: traderId_,
+        },
+        {
+            $set: { password },
+        }
+    );
 }
 //this function takes in a trader Id_ and delete the account CHECKED
 async function deleteTrader(traderId_) {
-    await getDB()
-        .collection("trader")
-        .deleteOne({
-            _id: ObjectId(traderId_),
-        });
+    await getDB().collection("trader").deleteOne({
+        _id: traderId_,
+    });
 }
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
 //Account USD Balances
@@ -110,7 +104,7 @@ async function depositTraderUSD(traderId_, quantity) {
         .collection("trader")
         .updateOne(
             {
-                _id: ObjectId(traderId_),
+                _id: traderId_,
             },
             {
                 $inc: { availableUSD: quantity },
@@ -125,7 +119,7 @@ async function withdrawTraderUSD(traderId_, quantity) {
             .collection("trader")
             .updateOne(
                 {
-                    _id: ObjectId(traderId_),
+                    _id: traderId_,
                 },
                 {
                     $inc: { availableUSD: -quantity },
@@ -142,7 +136,7 @@ async function adjustTraderUSD(traderId_, availableUSDQuantity, inOrderUSDQuanti
         .collection("trader")
         .updateOne(
             {
-                _id: ObjectId(traderId_),
+                _id: traderId_,
             },
             {
                 $inc: {
@@ -155,11 +149,9 @@ async function adjustTraderUSD(traderId_, availableUSDQuantity, inOrderUSDQuanti
 //This function returns usd amount, given trader Id_
 //returns an object with keys availableUSD and inOrderUSD
 async function checkTraderUSD(traderId_) {
-    let trader = await getDB()
-        .collection("trader")
-        .findOne({
-            _id: ObjectId(traderId_),
-        });
+    let trader = await getDB().collection("trader").findOne({
+        _id: traderId_,
+    });
     return {
         availableUSD: trader.availableUSD,
         inOrderUSD: trader.inOrderUSD,
@@ -205,19 +197,15 @@ async function createCoin(ticker, coinName, imageURL, coingeckoCoinID) {
 }
 //This function takes in a coin Id_ and returns the details of the coin
 async function getCoinDetails(coinId_) {
-    return await getDB()
-        .collection("coin")
-        .findOne({ _id: ObjectId(coinId_) });
+    return await getDB().collection("coin").findOne({ _id: coinId_ });
 }
 //This function deposits coin, with quantity and trader Id_
 //The requirement is to update both quantity in coin and deposit transaction collection
 async function depositCoin(traderId_, coinId_, quantity) {
-    queryCoin = await getDB()
-        .collection("coin")
-        .findOne({
-            _id: ObjectId(coinId_),
-            "balances.traderId_": traderId_,
-        });
+    queryCoin = await getDB().collection("coin").findOne({
+        _id: coinId_,
+        "balances.traderId_": traderId_,
+    });
     if (queryCoin) {
         //If The field can be found
         let newQty = queryCoin.balances[0].availableBalance + quantity;
@@ -225,7 +213,7 @@ async function depositCoin(traderId_, coinId_, quantity) {
             .collection("coin")
             .updateOne(
                 {
-                    _id: ObjectId(coinId_),
+                    _id: coinId_,
                     "balances.traderId_": traderId_,
                 },
                 {
@@ -238,7 +226,7 @@ async function depositCoin(traderId_, coinId_, quantity) {
             .collection("coin")
             .updateOne(
                 {
-                    _id: ObjectId(coinId_),
+                    _id: coinId_,
                 },
                 {
                     $push: { balances: { traderId_: traderId_, availableBalance: quantity, inOrderBalance: 0 } },
@@ -257,12 +245,10 @@ async function depositCoin(traderId_, coinId_, quantity) {
 //This function will return false if available balance is < quantity (case 2)
 //this function will return false if the person have never deposited this coin before (case 1)
 async function withdrawCoin(traderId_, coinId_, quantity) {
-    queryCoin = await getDB()
-        .collection("coin")
-        .findOne({
-            _id: ObjectId(coinId_),
-            "balances.traderId_": traderId_,
-        });
+    queryCoin = await getDB().collection("coin").findOne({
+        _id: coinId_,
+        "balances.traderId_": traderId_,
+    });
     if (queryCoin) {
         //Case two: The person does not have enough funds to withdraw
         if (queryCoin.balances[0].availableBalance < quantity) {
@@ -275,7 +261,7 @@ async function withdrawCoin(traderId_, coinId_, quantity) {
                 .collection("coin")
                 .updateOne(
                     {
-                        _id: ObjectId(coinId_),
+                        _id: coinId_,
                         "balances.traderId_": traderId_,
                     },
                     {
@@ -301,7 +287,7 @@ async function adjustCoin(traderId_, coinId_, availableBalanceQuantity, inOrderB
         .collection("coin")
         .updateOne(
             {
-                _id: ObjectId(coinId_),
+                _id: coinId_,
                 "balances.traderId_": traderId_,
             },
             {
@@ -419,11 +405,9 @@ async function createOpenOrder(coinId_, traderId_, price, quantity, type) {
                 if (quantity >= order.orderQuantity - order.filledQuantity) {
                     //amount to buy is more than what order can fill at that price, hence we fill the sell order
                     //Remove the document from the open orders collection since the order has been filled
-                    await getDB()
-                        .collection("openOrders")
-                        .deleteOne({
-                            _id: ObjectId(order._id),
-                        });
+                    await getDB().collection("openOrders").deleteOne({
+                        _id: order._id,
+                    });
                     //Copy the order to filled orders collection
                     await getDB()
                         .collection("filledOrders")
@@ -441,11 +425,11 @@ async function createOpenOrder(coinId_, traderId_, price, quantity, type) {
                     //Update Sellers USD (increase)
                     adjustTraderUSD(order.traderId_, order.price * (order.orderQuantity - order.filledQuantity), 0);
                     //Update Sellers Coin Balance (decrease)
-                    adjustCoin(order.traderId_, 0, -(order.orderQuantity - order.filledQuantity));
+                    adjustCoin(order.traderId_, order.coinId_, 0, -(order.orderQuantity - order.filledQuantity));
                     //Update Buyers USD (decrease)
                     adjustTraderUSD(traderId_, -order.price * (order.orderQuantity - order.filledQuantity), 0);
                     //Update Buyers Coin Balance
-                    adjustCoin(traderId_, order.orderQuantity - order.filledQuantity, 0);
+                    adjustCoin(traderId_, coinId_, order.orderQuantity - order.filledQuantity, 0);
 
                     amountUSDPaid += order.price * (order.orderQuantity - order.filledQuantity); //Update amount of usd paid
                     quantity -= order.quantity; //deduct off current quantity
@@ -458,7 +442,7 @@ async function createOpenOrder(coinId_, traderId_, price, quantity, type) {
                         .collection("openOrders")
                         .updateOne(
                             {
-                                _id: ObjectId(order._id),
+                                _id: order._id,
                             },
                             {
                                 filledQuantity: order.filledQuantity + quantity, //increment the filled quantity by the amount sold
@@ -467,11 +451,11 @@ async function createOpenOrder(coinId_, traderId_, price, quantity, type) {
                     //Update Sellers USD (increase)
                     adjustTraderUSD(order.traderId_, order.price * quantity, 0);
                     //Update Sellers Coin Balance (decrease)
-                    adjustCoin(order.traderId_, 0, -quantity);
+                    adjustCoin(order.traderId_, order.coinId_, 0, -quantity);
                     //Update Buyers USD (decrease)
                     adjustTraderUSD(traderId_, -order.price * quantity, 0);
                     //Update Buyers Coin Balance
-                    adjustCoin(traderId_, quantity, 0);
+                    adjustCoin(traderId_, coinId_, quantity, 0);
 
                     amountUSDPaid += order.price * quantity; //Update amount of usd paid
 
@@ -510,8 +494,25 @@ async function createOpenOrder(coinId_, traderId_, price, quantity, type) {
                 //Update Buyers USD (move available to in order)
                 adjustTraderUSD(traderId_, -price * quantity, price * quantity);
             }
+            //This part is for the queryorders = null case
+            //then we just make a new BUY order!
+            if (queryOrders.length == 0) {
+                await getDB().collection("openOrders").insertOne({
+                    coinId_: coinId_,
+                    traderId_: traderId_,
+                    orderPrice: price, //The price the order was set at
+                    orderQuantity: quantity,
+                    filledQuantity: 0,
+                    usdTransacted: 0,
+                    type: "BUY", //BUY/SELL
+                    timestamp: new Date().getTime(), //Timestamp when order was placed
+                });
+                adjustCoin(traderId_, coinId_, -quantity, quantity);
+            }
         }
     } else {
+        console.log("An incoming sell order has been detected");
+        //For SELL orders
         //Retrieve the buy side orderbook for that coin
         let queryOrders = await getDB()
             .collection("openOrders")
@@ -535,13 +536,12 @@ async function createOpenOrder(coinId_, traderId_, price, quantity, type) {
             //Check if the SELL order price is less/equals to buy order price
             if (price <= order.price) {
                 if (quantity >= order.orderQuantity - order.filledQuantity) {
+                    console.log("Remove the lowest buy order");
                     //amount to sell is more than what order can fill at that price, hence we fill the buy order
                     //Remove the document from the open orders collection since the order has been filled
-                    await getDB()
-                        .collection("openOrders")
-                        .deleteOne({
-                            _id: ObjectId(order._id),
-                        });
+                    await getDB().collection("openOrders").deleteOne({
+                        _id: order._id,
+                    });
                     //Copy the order to filled orders collection
                     await getDB()
                         .collection("filledOrders")
@@ -559,24 +559,25 @@ async function createOpenOrder(coinId_, traderId_, price, quantity, type) {
                     //Update Buyers USD (decrease)
                     adjustTraderUSD(order.traderId_, 0, -order.price * (order.orderQuantity - order.filledQuantity));
                     //Update Buyers Coin Balance (increase)
-                    adjustCoin(order.traderId_, order.orderQuantity - order.filledQuantity, 0);
+                    adjustCoin(order.traderId_, order.coinId_, order.orderQuantity - order.filledQuantity, 0);
                     //Update Sellers USD (increase)
                     adjustTraderUSD(traderId_, order.price * (order.orderQuantity - order.filledQuantity), 0);
                     //Update Sellers Coin Balance (decrease)
-                    adjustCoin(order.traderId_, -(order.orderQuantity - order.filledQuantity), 0);
+                    adjustCoin(order.traderId_, order.coinId_, -(order.orderQuantity - order.filledQuantity), 0);
 
                     amountUSDRecieved += order.price * (order.orderQuantity - order.filledQuantity); //Update amount of usd recieved
                     quantity -= order.quantity; //deduct off current quantity
 
                     //move on to the next item
                 } else {
+                    console.log("Partially fill the lowest buy order");
                     //buy quantity is less than the current SELL order size
                     //then we need to finish the buy order and adjust the current SELL order
                     await getDB()
                         .collection("openOrders")
                         .updateOne(
                             {
-                                _id: ObjectId(order._id),
+                                _id: order._id,
                             },
                             {
                                 filledQuantity: order.filledQuantity + quantity, //increment the filled quantity by the amount sold
@@ -585,11 +586,11 @@ async function createOpenOrder(coinId_, traderId_, price, quantity, type) {
                     //Update Buyers USD (decrease)
                     adjustTraderUSD(order.traderId_, 0, -order.price * quantity);
                     //Update Buyers Coin Balance (increase)
-                    adjustCoin(order.traderId_, quantity, 0);
+                    adjustCoin(order.traderId_, order.coinId_, quantity, 0);
                     //Update Sellers USD (increase)
                     adjustTraderUSD(traderId_, order.price * quantity, 0);
                     //Update Sellers Coin Balance (decrease)
-                    adjustCoin(traderId_, -quantity, 0);
+                    adjustCoin(traderId_, coinId_, -quantity, 0);
 
                     amountUSDRecieved += order.price * quantity; //Update amount of usd paid
 
@@ -610,7 +611,8 @@ async function createOpenOrder(coinId_, traderId_, price, quantity, type) {
 
                     //completion of the MARKET ORDER. THIS HAS BEEN A MARKET ORDER
                 }
-            } else {
+            } else if (price > order.price) {
+                console.log("No price satisfy, so create a SELL order");
                 //since the SELL price is more than the HIGHEST BUY order price, we make a new SELL limit order as an open order
                 await getDB()
                     .collection("openOrders")
@@ -620,14 +622,32 @@ async function createOpenOrder(coinId_, traderId_, price, quantity, type) {
                         orderPrice: price, //The price the order was set at
                         orderQuantity: initialQuantity,
                         filledQuantity: initialQuantity - quantity,
-                        usdTransacted: amountUSDPaid,
+                        usdTransacted: amountUSDRecieved,
                         type: "SELL", //BUY/SELL
                         timestamp: new Date().getTime(), //Timestamp when order was placed
                     });
                 //Now we need to adjust the available balances
                 //Update Buyers USD (move available to in order)
-                adjustCoin(traderId_, -quantity, quantity);
+                adjustCoin(traderId_, coinId_, -quantity, quantity);
+                //then we break out of the loop
+                break;
             }
+        }
+        //This part is for the queryorders = null case
+        //then we just make a new SELL order!
+        if (queryOrders.length == 0) {
+            console.log("Empty orderbook detected, create SELL order");
+            await getDB().collection("openOrders").insertOne({
+                coinId_: coinId_,
+                traderId_: traderId_,
+                orderPrice: price, //The price the order was set at
+                orderQuantity: quantity,
+                filledQuantity: 0,
+                usdTransacted: 0,
+                type: "SELL", //BUY/SELL
+                timestamp: new Date().getTime(), //Timestamp when order was placed
+            });
+            adjustCoin(traderId_, coinId_, -quantity, quantity);
         }
     }
 }
@@ -635,15 +655,15 @@ async function createOpenOrder(coinId_, traderId_, price, quantity, type) {
 async function main() {
     const MONGO_URI = process.env.MONGO_URI;
     await connect(MONGO_URI, "pachinko");
-    trader1Id_ = "6230c8501410bbdd9ae408af";
-    trader2Id_ = "6230c8501410bbdd9ae408b0";
-    coinId_ = "6230c8d75548f25eff93b4fe";
+    trader1Id_ = ObjectId("623139253cc51f8af3d42791");
+    trader2Id_ = ObjectId("623139253cc51f8af3d42792");
+    coinId_ = ObjectId("623139253cc51f8af3d42793");
 
-    //populateFakeTrader(2);
-    //createCoin("DOGE", "Dogecoin", "www.kek.com", "dogecoin");
+    // populateFakeTrader(2);
+    // createCoin("DOGE", "Dogecoin", "www.kek.com", "dogecoin");
     //depositTraderUSD(trader1Id_, 10000);
     //depositCoin(trader2Id_, coinId_, 10000);
-    createOpenOrder(coinId_, trader2Id_, 1, 1000, "SELL");
+    await createOpenOrder(coinId_, trader2Id_, 1, 1000, "SELL");
 
     console.log("Tests completed");
 }
