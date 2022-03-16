@@ -283,6 +283,7 @@ async function withdrawCoin(traderId_, coinId_, quantity) {
 }
 //This function adjusts coin balances for that trader id_ and that coinId_
 async function adjustCoin(traderId_, coinId_, availableBalanceQuantity, inOrderBalanceQuantity) {
+    console.log("adjust coin has been called with parameters", traderId_, availableBalanceQuantity, inOrderBalanceQuantity);
     await getDB()
         .collection("coin")
         .updateOne(
@@ -378,6 +379,7 @@ async function checkWithdrawalTransactions(traderId_, timeStart = new Date().get
 async function createOpenOrder(coinId_, traderId_, price, quantity, type) {
     //check if buy or sell
     if (type == "BUY") {
+        console.log("An incoming BUY order has been detected");
         //Initialize the buyers balances in coin, there is a chance that he doesn't have any balances
         depositCoin(traderId_, coinId_, 0);
         //Retrieve the sell side orderbook for that coin
@@ -395,6 +397,7 @@ async function createOpenOrder(coinId_, traderId_, price, quantity, type) {
             })
             .toArray();
 
+        //console.log("The SELL side for the orderbook is ", queryOrders);
         //Need to lock all read/writes to database while orderbook matching is done
         //Loop through the orderbook from smallest to largest
         let amountUSDPaid = 0; //keep track of usd paid for final price calculations
@@ -403,6 +406,7 @@ async function createOpenOrder(coinId_, traderId_, price, quantity, type) {
             //Check if the buy order price is more/equals to sell order price
             if (price >= order.price) {
                 if (quantity >= order.orderQuantity - order.filledQuantity) {
+                    console.log("Remove the lowest SELL order");
                     //amount to buy is more than what order can fill at that price, hence we fill the sell order
                     //Remove the document from the open orders collection since the order has been filled
                     await getDB().collection("openOrders").deleteOne({
@@ -436,6 +440,7 @@ async function createOpenOrder(coinId_, traderId_, price, quantity, type) {
 
                     //move on to the next item
                 } else {
+                    console.log("Partially fill the highest SELL order");
                     //buy quantity is less than the current SELL order size
                     //then we need to finish the buy order and adjust the current SELL order
                     await getDB()
@@ -445,7 +450,7 @@ async function createOpenOrder(coinId_, traderId_, price, quantity, type) {
                                 _id: order._id,
                             },
                             {
-                                filledQuantity: order.filledQuantity + quantity, //increment the filled quantity by the amount sold
+                                $set: { filledQuantity: order.filledQuantity + quantity }, //increment the filled quantity by the amount sold
                             }
                         );
                     //Update Sellers USD (increase)
@@ -454,7 +459,7 @@ async function createOpenOrder(coinId_, traderId_, price, quantity, type) {
                     adjustCoin(order.traderId_, order.coinId_, 0, -quantity);
                     //Update Buyers USD (decrease)
                     adjustTraderUSD(traderId_, -order.price * quantity, 0);
-                    //Update Buyers Coin Balance
+                    //Update Buyers Coin Balance (increase)
                     adjustCoin(traderId_, coinId_, quantity, 0);
 
                     amountUSDPaid += order.price * quantity; //Update amount of usd paid
@@ -475,15 +480,17 @@ async function createOpenOrder(coinId_, traderId_, price, quantity, type) {
                         });
 
                     //completion of the MARKET ORDER. THIS HAS BEEN A MARKET ORDER
+                    break;
                 }
             } else {
+                console.log("No price satisfy, so create a BUY order");
                 //since the BID price is less than the LOWEST SELL order price, we make a new BUY limit order as an open order
                 await getDB()
                     .collection("openOrders")
                     .insertOne({
                         coinId_: coinId_,
                         traderId_: traderId_,
-                        orderPrice: price, //The price the order was set at
+                        price: price, //The price the order was set at
                         orderQuantity: initialQuantity,
                         filledQuantity: initialQuantity - quantity,
                         usdTransacted: amountUSDPaid,
@@ -493,25 +500,28 @@ async function createOpenOrder(coinId_, traderId_, price, quantity, type) {
                 //Now we need to adjust the available balances
                 //Update Buyers USD (move available to in order)
                 adjustTraderUSD(traderId_, -price * quantity, price * quantity);
+
+                break;
             }
             //This part is for the queryorders = null case
             //then we just make a new BUY order!
             if (queryOrders.length == 0) {
+                console.log("Empty orderbook detected, create BUY order");
                 await getDB().collection("openOrders").insertOne({
                     coinId_: coinId_,
                     traderId_: traderId_,
-                    orderPrice: price, //The price the order was set at
+                    price: price, //The price the order was set at
                     orderQuantity: quantity,
                     filledQuantity: 0,
                     usdTransacted: 0,
                     type: "BUY", //BUY/SELL
                     timestamp: new Date().getTime(), //Timestamp when order was placed
                 });
-                adjustCoin(traderId_, coinId_, -quantity, quantity);
+                adjustTraderUSD(traderId_, -quantity * price, price * quantity);
             }
         }
     } else {
-        console.log("An incoming sell order has been detected");
+        console.log("An incoming SELL order has been detected");
         //For SELL orders
         //Retrieve the buy side orderbook for that coin
         let queryOrders = await getDB()
@@ -527,7 +537,7 @@ async function createOpenOrder(coinId_, traderId_, price, quantity, type) {
                 timestamp: 1,
             })
             .toArray();
-        console.log("The sell side for the orderbook is ", queryOrders);
+        //console.log("The BUY side for the orderbook is ", queryOrders);
         //Need to lock all read/writes to database while orderbook matching is done
         //Loop through the BUY orderbook from largest price to smallest price
         let amountUSDRecieved = 0; //keep track of usd paid for final price calculations
@@ -536,7 +546,7 @@ async function createOpenOrder(coinId_, traderId_, price, quantity, type) {
             //Check if the SELL order price is less/equals to buy order price
             if (price <= order.price) {
                 if (quantity >= order.orderQuantity - order.filledQuantity) {
-                    console.log("Remove the lowest buy order");
+                    console.log("Remove the lowest BUY order");
                     //amount to sell is more than what order can fill at that price, hence we fill the buy order
                     //Remove the document from the open orders collection since the order has been filled
                     await getDB().collection("openOrders").deleteOne({
@@ -580,7 +590,7 @@ async function createOpenOrder(coinId_, traderId_, price, quantity, type) {
                                 _id: order._id,
                             },
                             {
-                                filledQuantity: order.filledQuantity + quantity, //increment the filled quantity by the amount sold
+                                $set: { filledQuantity: order.filledQuantity + quantity }, //increment the filled quantity by the amount sold
                             }
                         );
                     //Update Buyers USD (decrease)
@@ -610,8 +620,9 @@ async function createOpenOrder(coinId_, traderId_, price, quantity, type) {
                         });
 
                     //completion of the MARKET ORDER. THIS HAS BEEN A MARKET ORDER
+                    break;
                 }
-            } else if (price > order.price) {
+            } else {
                 console.log("No price satisfy, so create a SELL order");
                 //since the SELL price is more than the HIGHEST BUY order price, we make a new SELL limit order as an open order
                 await getDB()
@@ -619,7 +630,7 @@ async function createOpenOrder(coinId_, traderId_, price, quantity, type) {
                     .insertOne({
                         coinId_: coinId_,
                         traderId_: traderId_,
-                        orderPrice: price, //The price the order was set at
+                        price: price, //The price the order was set at
                         orderQuantity: initialQuantity,
                         filledQuantity: initialQuantity - quantity,
                         usdTransacted: amountUSDRecieved,
@@ -640,7 +651,7 @@ async function createOpenOrder(coinId_, traderId_, price, quantity, type) {
             await getDB().collection("openOrders").insertOne({
                 coinId_: coinId_,
                 traderId_: traderId_,
-                orderPrice: price, //The price the order was set at
+                price: price, //The price the order was set at
                 orderQuantity: quantity,
                 filledQuantity: 0,
                 usdTransacted: 0,
@@ -655,15 +666,35 @@ async function createOpenOrder(coinId_, traderId_, price, quantity, type) {
 async function main() {
     const MONGO_URI = process.env.MONGO_URI;
     await connect(MONGO_URI, "pachinko");
-    trader1Id_ = ObjectId("623139253cc51f8af3d42791");
-    trader2Id_ = ObjectId("623139253cc51f8af3d42792");
-    coinId_ = ObjectId("623139253cc51f8af3d42793");
+    trader1Id_ = ObjectId("6231aad91e57db48f9012c0d");
+    trader2Id_ = ObjectId("6231aad91e57db48f9012c0e");
+    coinId_ = ObjectId("6231aad91e57db48f9012c0f");
+
+    // await getDB().collection("openOrders").remove();
+    // await getDB().collection("coin").remove();
+    // await getDB().collection("trader").remove();
+    // await getDB().collection("cancelledOrders").remove();
+    // await getDB().collection("depositTransactions").remove();
+    // await getDB().collection("filledOrders").remove();
+    // await getDB().collection("openOrders").remove();
+    // await getDB().collection("withdrawalTransactions").remove();
 
     // populateFakeTrader(2);
     // createCoin("DOGE", "Dogecoin", "www.kek.com", "dogecoin");
-    //depositTraderUSD(trader1Id_, 10000);
-    //depositCoin(trader2Id_, coinId_, 10000);
+
+    depositTraderUSD(trader1Id_, 10000);
+    depositCoin(trader2Id_, coinId_, 10000);
+
     await createOpenOrder(coinId_, trader2Id_, 1, 1000, "SELL");
+    await createOpenOrder(coinId_, trader2Id_, 1.1, 1000, "SELL");
+    await createOpenOrder(coinId_, trader2Id_, 1.2, 1000, "SELL");
+    await createOpenOrder(coinId_, trader2Id_, 1.3, 1000, "SELL");
+    await createOpenOrder(coinId_, trader2Id_, 1.4, 1000, "SELL");
+    await createOpenOrder(coinId_, trader2Id_, 1.5, 1000, "SELL");
+    await createOpenOrder(coinId_, trader1Id_, 0.9, 1000, "BUY");
+    await createOpenOrder(coinId_, trader1Id_, 0.8, 1000, "BUY");
+    await createOpenOrder(coinId_, trader1Id_, 0.7, 1000, "BUY");
+    // await createOpenOrder(coinId_, trader1Id_, 1, 100, "BUY");
 
     console.log("Tests completed");
 }
