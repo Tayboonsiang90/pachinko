@@ -132,6 +132,7 @@ async function withdrawTraderUSD(traderId_, quantity) {
 }
 //This function adjust USD, with quantity and trader Id_
 async function adjustTraderUSD(traderId_, availableUSDQuantity, inOrderUSDQuantity) {
+    console.log("Adjust USD has been called for ", traderId_, availableUSDQuantity, inOrderUSDQuantity);
     await getDB()
         .collection("trader")
         .updateOne(
@@ -202,7 +203,7 @@ async function getCoinDetails(coinId_) {
 //This function deposits coin, with quantity and trader Id_
 //The requirement is to update both quantity in coin and deposit transaction collection
 async function depositCoin(traderId_, coinId_, quantity) {
-    queryCoin = await getDB().collection("coin").findOne({
+    let queryCoin = await getDB().collection("coin").findOne({
         _id: coinId_,
         "balances.traderId_": traderId_,
     });
@@ -282,8 +283,25 @@ async function withdrawCoin(traderId_, coinId_, quantity) {
     }
 }
 //This function adjusts coin balances for that trader id_ and that coinId_
+//Check if there is an entry for that trader id_ in that coinId_
 async function adjustCoin(traderId_, coinId_, availableBalanceQuantity, inOrderBalanceQuantity) {
-    console.log("adjust coin has been called with parameters", traderId_, availableBalanceQuantity, inOrderBalanceQuantity);
+    let queryCoin = await getDB().collection("coin").findOne({
+        _id: coinId_,
+        "balances.traderId_": traderId_,
+    });
+    console.log("Adjust coin has been called with parameters", traderId_, availableBalanceQuantity, inOrderBalanceQuantity);
+    if (!queryCoin) {
+        await getDB()
+            .collection("coin")
+            .updateOne(
+                {
+                    _id: coinId_,
+                },
+                {
+                    $push: { balances: { traderId_: traderId_, availableBalance: 0, inOrderBalance: 0 } },
+                }
+            );
+    }
     await getDB()
         .collection("coin")
         .updateOne(
@@ -380,8 +398,6 @@ async function createOpenOrder(coinId_, traderId_, price, quantity, type) {
     //check if buy or sell
     if (type == "BUY") {
         console.log("An incoming BUY order has been detected");
-        //Initialize the buyers balances in coin, there is a chance that he doesn't have any balances
-        depositCoin(traderId_, coinId_, 0);
         //Retrieve the sell side orderbook for that coin
         let queryOrders = await getDB()
             .collection("openOrders")
@@ -422,22 +438,23 @@ async function createOpenOrder(coinId_, traderId_, price, quantity, type) {
                             orderPrice: order.price, //The price the order was set at
                             filledPrice: (order.usdTransacted + order.price * (order.orderQuantity - order.filledQuantity)) / order.orderQuantity, //The price the order was filled at
                             quantity: order.orderQuantity, //Amount
-                            type: order.type, //BUY/SELL
+                            type: "SELL", //BUY/SELL
                             orderTimestamp: order.timestamp, //Timestamp when order was placed
                             filledTimestamp: new Date().getTime(), //Timestamp when order was filled
                         });
                     //Update Sellers USD (increase)
-                    adjustTraderUSD(order.traderId_, order.price * (order.orderQuantity - order.filledQuantity), 0);
+                    await adjustTraderUSD(order.traderId_, order.price * (order.orderQuantity - order.filledQuantity), 0);
                     //Update Sellers Coin Balance (decrease)
-                    adjustCoin(order.traderId_, order.coinId_, 0, -(order.orderQuantity - order.filledQuantity));
+                    await adjustCoin(order.traderId_, order.coinId_, 0, -(order.orderQuantity - order.filledQuantity));
                     //Update Buyers USD (decrease)
-                    adjustTraderUSD(traderId_, -order.price * (order.orderQuantity - order.filledQuantity), 0);
+                    await adjustTraderUSD(traderId_, -order.price * (order.orderQuantity - order.filledQuantity), 0);
                     //Update Buyers Coin Balance
-                    adjustCoin(traderId_, coinId_, order.orderQuantity - order.filledQuantity, 0);
+                    await adjustCoin(traderId_, coinId_, order.orderQuantity - order.filledQuantity, 0);
 
                     amountUSDPaid += order.price * (order.orderQuantity - order.filledQuantity); //Update amount of usd paid
                     quantity -= order.quantity; //deduct off current quantity
 
+                    console.log("Currently the BUY order has quantity ", quantity, " and amount USD Paid is ", amountUSDPaid);
                     //move on to the next item
                 } else {
                     console.log("Partially fill the highest SELL order");
@@ -454,13 +471,13 @@ async function createOpenOrder(coinId_, traderId_, price, quantity, type) {
                             }
                         );
                     //Update Sellers USD (increase)
-                    adjustTraderUSD(order.traderId_, order.price * quantity, 0);
+                    await adjustTraderUSD(order.traderId_, order.price * quantity, 0);
                     //Update Sellers Coin Balance (decrease)
-                    adjustCoin(order.traderId_, order.coinId_, 0, -quantity);
+                    await adjustCoin(order.traderId_, order.coinId_, 0, -quantity);
                     //Update Buyers USD (decrease)
-                    adjustTraderUSD(traderId_, -order.price * quantity, 0);
+                    await adjustTraderUSD(traderId_, -order.price * quantity, 0);
                     //Update Buyers Coin Balance (increase)
-                    adjustCoin(traderId_, coinId_, quantity, 0);
+                    await adjustCoin(traderId_, coinId_, quantity, 0);
 
                     amountUSDPaid += order.price * quantity; //Update amount of usd paid
 
@@ -499,7 +516,7 @@ async function createOpenOrder(coinId_, traderId_, price, quantity, type) {
                     });
                 //Now we need to adjust the available balances
                 //Update Buyers USD (move available to in order)
-                adjustTraderUSD(traderId_, -price * quantity, price * quantity);
+                await adjustTraderUSD(traderId_, -price * quantity, price * quantity);
 
                 break;
             }
@@ -666,9 +683,9 @@ async function createOpenOrder(coinId_, traderId_, price, quantity, type) {
 async function main() {
     const MONGO_URI = process.env.MONGO_URI;
     await connect(MONGO_URI, "pachinko");
-    trader1Id_ = ObjectId("6231aad91e57db48f9012c0d");
-    trader2Id_ = ObjectId("6231aad91e57db48f9012c0e");
-    coinId_ = ObjectId("6231aad91e57db48f9012c0f");
+    trader1Id_ = ObjectId("623200bdd2e41013b95ae73e");
+    trader2Id_ = ObjectId("623200bdd2e41013b95ae73f");
+    coinId_ = ObjectId("623200bdd2e41013b95ae740");
 
     // await getDB().collection("openOrders").remove();
     // await getDB().collection("coin").remove();
@@ -685,15 +702,17 @@ async function main() {
     depositTraderUSD(trader1Id_, 10000);
     depositCoin(trader2Id_, coinId_, 10000);
 
-    await createOpenOrder(coinId_, trader2Id_, 1, 1000, "SELL");
-    await createOpenOrder(coinId_, trader2Id_, 1.1, 1000, "SELL");
-    await createOpenOrder(coinId_, trader2Id_, 1.2, 1000, "SELL");
-    await createOpenOrder(coinId_, trader2Id_, 1.3, 1000, "SELL");
-    await createOpenOrder(coinId_, trader2Id_, 1.4, 1000, "SELL");
-    await createOpenOrder(coinId_, trader2Id_, 1.5, 1000, "SELL");
-    await createOpenOrder(coinId_, trader1Id_, 0.9, 1000, "BUY");
-    await createOpenOrder(coinId_, trader1Id_, 0.8, 1000, "BUY");
-    await createOpenOrder(coinId_, trader1Id_, 0.7, 1000, "BUY");
+    // await createOpenOrder(coinId_, trader2Id_, 1, 1000, "SELL");
+    // await createOpenOrder(coinId_, trader2Id_, 1.1, 1000, "SELL");
+    // await createOpenOrder(coinId_, trader2Id_, 1.2, 1000, "SELL");
+    // await createOpenOrder(coinId_, trader2Id_, 1.3, 1000, "SELL");
+    // await createOpenOrder(coinId_, trader2Id_, 1.4, 1000, "SELL");
+    // await createOpenOrder(coinId_, trader2Id_, 1.5, 1000, "SELL");
+    // await createOpenOrder(coinId_, trader1Id_, 0.9, 1000, "BUY");
+    // await createOpenOrder(coinId_, trader1Id_, 0.8, 1000, "BUY");
+    // await createOpenOrder(coinId_, trader1Id_, 0.7, 1000, "BUY");
+    await createOpenOrder(coinId_, trader1Id_, 1, 1000, "BUY");
+    // await createOpenOrder(coinId_, trader1Id_, 1, 800, "BUY");
     // await createOpenOrder(coinId_, trader1Id_, 1, 100, "BUY");
 
     console.log("Tests completed");
